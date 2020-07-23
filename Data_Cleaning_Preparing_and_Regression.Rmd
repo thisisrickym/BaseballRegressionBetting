@@ -1,0 +1,341 @@
+---
+title: "FinalProject"
+author: "Richard Mailhot"
+date: "30 June 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+To create our data to be used, we created the functions mlb_betting_info_clean and hitting_data_clean then combined our data:
+
+
+```{r}
+mlb_betting_info_clean <- function(year){
+  
+  library('data.table')
+  library('schoolmath')
+  library('dplyr')
+  filename = paste("mlb_odds_20", year, ".csv", sep = "")
+  
+  mlb_year <- read.csv(filename, stringsAsFactors = FALSE)
+  
+  ## If we wanted to include the open price
+  ##mlb_year$PriceOpen[mlb_year$Open < 0] <- (-100/mlb_year$Open[mlb_year$Open < 0])+1
+  ##mlb_year$PriceOpen[mlb_year$Open > 0] <- (mlb_year$Open[mlb_year$Open > 0]/100)+1
+  
+  mlb_year$PriceClose[mlb_year$Close <0]<- (-100/mlb_year$Close[mlb_year$Close < 0])+1
+  mlb_year$PriceClose[mlb_year$Close >0]<- (mlb_year$Close[mlb_year$Close > 0]/100)+1
+  
+  mlb_year$CloseOdds <- 1/mlb_year$PriceClose
+  scores <- c(0:50)
+
+
+  mlb_year$Win_Even <- mlb_year$Final - shift(mlb_year$Final)
+  mlb_year$HandB_Even <-shift(mlb_year$Hand)
+  mlb_year$Win_Odd <- mlb_year$Final - shift(mlb_year$Final, type = "lead")
+  mlb_year$HandB_Odd <- shift(mlb_year$Hand, type = "lead")
+  
+  mlb_year$Score_Diff[is.even(mlb_year$Rot)] <- mlb_year$Win_Even[is.even(mlb_year$Rot)]
+  mlb_year$Score_Diff[is.odd(mlb_year$Rot)] <- mlb_year$Win_Odd[is.odd(mlb_year$Rot)]
+  
+  mlb_year$HandB[is.even(mlb_year$Rot)] <- mlb_year$HandB_Even[is.even(mlb_year$Rot)]
+  mlb_year$HandB[is.odd(mlb_year$Rot)] <- mlb_year$HandB_Odd[is.odd(mlb_year$Rot)]
+  
+  mlb_year$Win <- if_else(mlb_year$Score_Diff>0, 1, 0)
+  mlb_year$Ones <- 1
+  mlb_year$GameNo <- ave(mlb_year$Ones, mlb_year$Team, FUN=cumsum)
+  mlb_year <- mlb_year %>% group_by(Date, Team) %>% mutate(DblHead = cumsum(Ones))
+  mlb_year$DblHead[mlb_year$DblHead == 1] <- 0
+  
+  mlb_year$Pitcher <- substring(mlb_year$Pitcher, 2)
+  
+  mlb_year$Team[mlb_year$Team == 'LOS'] <- 'LAD'
+  mlb_year$Date <- as.Date.character(mlb_year$Date, tryFormats = c('%d/%m/%Y', '%Y-%m-%d'))
+  mlb_year <- mlb_year[, !(names(mlb_year) %in% c("Win_Odd", "Win_Even", "Close", "Open", "Ones",
+                                                  "HandB_Odd", "HandB_Even"))]
+  mlb_year
+}
+```
+```{r}
+
+hitting_data_clean <- function(year){
+  library('dplyr')
+  library('tidyr')
+  library('data.table')
+  library('schoolmath')
+  
+  filename = paste("GL20", year, ".csv", sep = "")
+  
+  hitting_df <- read.csv(filename, stringsAsFactors = FALSE)
+  hitting_copy <- hitting_df
+  
+  hitting_df <- separate(hitting_df, Date, c("Year", "Month_Day"), sep = -4,remove = TRUE,
+                           convert = FALSE, extra = "warn", fill = "warn")
+  hitting_df <- separate(hitting_df, Month_Day, c("Month", "Day"), sep = -2, remove = TRUE,
+                           convert = FALSE, extra = "warn", fill = "warn")
+  hitting_df$Date <- as.Date(paste(hitting_df$Day, hitting_df$Month, hitting_df$Year, sep = ".")
+                               , format = "%d.%m.%Y")
+  hitting_df <- hitting_df[, !(names(hitting_df) %in% c("Month", "Day", "Year"))]
+  hitting_df$Home_BB <- hitting_df$Home_BB + hitting_df$Home_HBP
+  hitting_df$Visting_BB <- hitting_df$Visting_BB + hitting_df$Visting_HBP
+  
+  
+  hitting_df_visit <- hitting_df[, !(names(hitting_df) %in% c( "Home_RBI",
+                                                                     "Home_SacH", "Home_SacFl", "Home_HBP", "Home_IBB", "Home_GDP",
+                                                                     "Home_Catcher_Interference", "Home_LOB","Visting_RBI", "Visting_SacH",
+                                                                     "Visting_SacFl", "Visting_HBP", "Visting_IBB", "Visting_GDP",
+                                                                     "Visting_Catcher_Interference", "Visting_LOB", "Visting_SB",
+                                                                     "Visting_CS", "Home_CS", "Home_SB"))]
+  hitting_df_home <- hitting_df[, !(names(hitting_df) %in% c("Visting_RBI", "Visting_SacH",
+                                                                   "Visting_SacFl", "Visting_HBP", "Visting_IBB", "Visting_GDP",
+                                                                   "Visting_Catcher_Interference", "Visting_LOB", "Home_RBI",
+                                                                   "Home_SacH", "Home_SacFl", "Home_HBP", "Home_IBB", "Home_GDP",
+                                                                   "Home_Catcher_Interference", "Home_LOB", "Visting_SB",
+                                                                   "Visting_CS", "Home_CS", "Home_SB"))]
+  
+  
+  column_names_home <- c("DblHead", "DOW", "TeamB", "LeagueB", "GameNoB", "TeamA", "LeagueA", "GameNoA", "Final_ScoreB",
+                         "Final_ScoreA", "Length_Outs", "DayNight", "CompletionInfo", "LineB", "LineA", "B_AB", "B_Hits",
+                         "B_DB", "B_TR", "B_HR", "B_BB", "B_SO", "A_AB", "A_Hits", "A_DB", "A_TR", "A_HR", "A_BB",
+                         "A_SO", "B_SP_ID", "B_SP_Name", "A_SP_ID", "A_SP_Name", "Date")
+  
+  
+  column_names_visit <- c("DblHead", "DOW", "TeamA", "LeagueA", "GameNoA", "TeamB", "LeagueB", "GameNoB", "Final_ScoreA",
+                          "Final_ScoreB", "Length_Outs", "DayNight", "CompletionInfo", "LineA", "LineB", "A_AB", "A_Hits",
+                          "A_DB", "A_TR", "A_HR", "A_BB", "A_SO", "B_AB", "B_Hits", "B_DB", "B_TR", "B_HR", "B_BB",
+                          "B_SO", "A_SP_ID", "A_SP_Name", "B_SP_ID", "B_SP_Name", "Date")
+  
+  names(hitting_df_home) <- column_names_home
+  names(hitting_df_visit) <- column_names_visit
+  
+  hitting_df_home$VH <- 'H'
+  hitting_df_visit$VH <- 'V'
+  hitting_df_home$LeagueGameNo <- c(1:nrow(hitting_df_home))
+  hitting_df_visit$LeagueGameNo <- c(1:nrow(hitting_df_visit))
+  
+  
+  hitting_df_full <-rbind(hitting_df_home, hitting_df_visit)
+  hitting_df_full_copy <- hitting_df_full
+  hitting_df_full$A_SP_Name <- substring(hitting_df_full$A_SP_Name, regexpr(" ", hitting_df_full$A_SP_Name) + 1)
+  library('stringr')
+  hitting_df_full$A_SP_Name <- str_to_upper(hitting_df_full$A_SP_Name)
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'ANA'] <- 'LAA'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'ANA'] <- 'LAA'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'CHA'] <- 'CWS'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'CHA'] <- 'CWS'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'CHN'] <- 'CUB'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'CHN'] <- 'CUB'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'KCA'] <- 'KAN'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'KCA'] <- 'KAN'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'LAN'] <- 'LAD'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'LAN'] <- 'LAD'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'FLO'] <- 'MIA'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'FLO'] <- 'MIA'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'NYA'] <- 'NYY'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'NYA'] <- 'NYY'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'NYN'] <- 'NYM'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'NYN'] <- 'NYM'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'SDN'] <- 'SDG'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'SDN'] <- 'SDG'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'SFN'] <- 'SFO'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'SFN'] <- 'SFO'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'SLN'] <- 'STL'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'SLN'] <- 'STL'
+  
+  hitting_df_full$TeamA[hitting_df_full$TeamA == 'TBA'] <- 'TAM'
+  hitting_df_full$TeamB[hitting_df_full$TeamB == 'TBA'] <- 'TAM'
+  
+  hitting_df_full
+  
+}
+
+```
+
+```{r}
+library('dplyr')
+library('tidyr')
+library('data.table')
+library('schoolmath')
+
+source('mlb_betting_info_clean.R')
+source('hitting_data_clean.R')
+
+size_df <- data.frame(Year = integer(), Size = integer())
+
+years <- c(15:18)
+for (year in years){
+  
+  
+  mlb_betting_df <- mlb_betting_info_clean(year)
+  
+  hitting_df_full <- hitting_data_clean(year)
+  
+  
+  mlb_df_combined <- merge(mlb_betting_df, hitting_df_full, by.x = c("Team", "Date", "DblHead"), by.y = c("TeamA", "Date", "DblHead"))
+  
+  mlb_df_combined$difference <- mlb_df_combined$Final-mlb_df_combined$Final_ScoreA
+  sum(mlb_df_combined$difference)
+  
+  mlb_df_combined <- mlb_df_combined[mlb_df_combined$difference == 0, ]
+  
+  gameNos <- mlb_df_combined$LeagueGameNo[duplicated(mlb_df_combined$LeagueGameNo)]
+  
+  mlb_df_combined <-mlb_df_combined[ mlb_df_combined$LeagueGameNo %in% gameNos, ]
+  
+  mlb_df_combined <- mlb_df_combined[order(mlb_df_combined$LeagueGameNo, mlb_df_combined$Rot), ]
+  
+  mlb_df_combined$cum_AB <- ave(mlb_df_combined$A_AB, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_AB
+  mlb_df_combined$cum_Hits <- ave(mlb_df_combined$A_Hits, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_Hits
+  mlb_df_combined$cum_DB <- ave(mlb_df_combined$A_DB, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_DB
+  mlb_df_combined$cum_TR <- ave(mlb_df_combined$A_TR, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_TR
+  mlb_df_combined$cum_HR <- ave(mlb_df_combined$A_HR, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_HR
+  mlb_df_combined$cum_BB <- ave(mlb_df_combined$A_BB, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_BB
+  mlb_df_combined$cum_SO <- ave(mlb_df_combined$A_SO, mlb_df_combined$Team, FUN = cumsum) - mlb_df_combined$A_SO
+  
+  mlb_df_combined$A_Ave <- mlb_df_combined$cum_Hits/mlb_df_combined$cum_AB
+  mlb_df_combined$A_DB_Ave <- mlb_df_combined$cum_DB/mlb_df_combined$cum_AB
+  mlb_df_combined$A_TR_Ave <- mlb_df_combined$cum_TR/mlb_df_combined$cum_AB
+  mlb_df_combined$A_HR_Ave <- mlb_df_combined$cum_HR/mlb_df_combined$cum_AB
+  mlb_df_combined$A_BB_Ave <- mlb_df_combined$cum_BB/mlb_df_combined$cum_AB
+  mlb_df_combined$A_SO_Ave <- mlb_df_combined$cum_SO/mlb_df_combined$cum_AB
+  
+  mlb_df_combined$cum_AB <- ave(mlb_df_combined$B_AB, mlb_df_combined$TeamB, FUN = cumsum) - mlb_df_combined$B_AB
+  mlb_df_combined$cum_Hits <- ave(mlb_df_combined$B_Hits, mlb_df_combined$TeamB, FUN = cumsum) - mlb_df_combined$B_Hits
+  mlb_df_combined$cum_DB <- ave(mlb_df_combined$B_DB, mlb_df_combined$TeamB, FUN = cumsum) - mlb_df_combined$B_DB
+  mlb_df_combined$cum_TR <- ave(mlb_df_combined$B_TR, mlb_df_combined$TeamB, FUN = cumsum) - mlb_df_combined$B_TR
+  mlb_df_combined$cum_HR <- ave(mlb_df_combined$B_HR, mlb_df_combined$TeamB, FUN = cumsum)- mlb_df_combined$B_HR
+  mlb_df_combined$cum_BB <- ave(mlb_df_combined$B_BB, mlb_df_combined$TeamB, FUN = cumsum)- mlb_df_combined$B_BB
+  mlb_df_combined$cum_SO <- ave(mlb_df_combined$B_SO, mlb_df_combined$TeamB, FUN = cumsum)- mlb_df_combined$B_SO
+  
+  mlb_df_combined$B_Ave <- mlb_df_combined$cum_Hits/mlb_df_combined$cum_AB
+  mlb_df_combined$B_DB_Ave <- mlb_df_combined$cum_DB/mlb_df_combined$cum_AB
+  mlb_df_combined$B_TR_Ave <- mlb_df_combined$cum_TR/mlb_df_combined$cum_AB
+  mlb_df_combined$B_HR_Ave <- mlb_df_combined$cum_HR/mlb_df_combined$cum_AB
+  mlb_df_combined$B_BB_Ave <- mlb_df_combined$cum_BB/mlb_df_combined$cum_AB
+  mlb_df_combined$B_SO_Ave <- mlb_df_combined$cum_SO/mlb_df_combined$cum_AB
+  
+  mlb_df_combined$cum_AB <- ave(mlb_df_combined$B_AB, mlb_df_combined$A_SP_ID, FUN = cumsum)- mlb_df_combined$B_AB
+  mlb_df_combined$cum_Hits <- ave(mlb_df_combined$B_Hits, mlb_df_combined$A_SP_ID, FUN = cumsum)- mlb_df_combined$B_Hits
+  mlb_df_combined$cum_DB <- ave(mlb_df_combined$B_DB, mlb_df_combined$A_SP_ID, FUN = cumsum) - mlb_df_combined$B_DB
+  mlb_df_combined$cum_TR <- ave(mlb_df_combined$B_TR, mlb_df_combined$A_SP_ID, FUN = cumsum) - mlb_df_combined$B_TR
+  mlb_df_combined$cum_HR <- ave(mlb_df_combined$B_HR, mlb_df_combined$A_SP_ID, FUN = cumsum) - mlb_df_combined$B_HR
+  mlb_df_combined$cum_BB <- ave(mlb_df_combined$B_BB, mlb_df_combined$A_SP_ID, FUN = cumsum) - mlb_df_combined$B_BB
+  mlb_df_combined$cum_SO <- ave(mlb_df_combined$B_SO, mlb_df_combined$A_SP_ID, FUN = cumsum) - mlb_df_combined$B_SO
+  
+  mlb_df_combined$P_A_Ave <- mlb_df_combined$cum_Hits/mlb_df_combined$cum_AB
+  mlb_df_combined$P_A_DB_Ave <- mlb_df_combined$cum_DB/mlb_df_combined$cum_AB
+  mlb_df_combined$P_A_TR_Ave <- mlb_df_combined$cum_TR/mlb_df_combined$cum_AB
+  mlb_df_combined$P_A_HR_Ave <- mlb_df_combined$cum_HR/mlb_df_combined$cum_AB
+  mlb_df_combined$P_A_BB_Ave <- mlb_df_combined$cum_BB/mlb_df_combined$cum_AB
+  mlb_df_combined$P_A_SO_Ave <- mlb_df_combined$cum_SO/mlb_df_combined$cum_AB
+  
+  
+  mlb_df_combined$cum_AB <- ave(mlb_df_combined$A_AB, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_AB
+  mlb_df_combined$cum_Hits <- ave(mlb_df_combined$A_Hits, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_Hits
+  mlb_df_combined$cum_DB <- ave(mlb_df_combined$A_DB, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_DB
+  mlb_df_combined$cum_TR <- ave(mlb_df_combined$A_TR, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_TR
+  mlb_df_combined$cum_HR <- ave(mlb_df_combined$A_HR, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_HR
+  mlb_df_combined$cum_BB <- ave(mlb_df_combined$A_BB, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_BB
+  mlb_df_combined$cum_SO <- ave(mlb_df_combined$A_SO, mlb_df_combined$B_SP_ID, FUN = cumsum) - mlb_df_combined$A_SO
+  
+  mlb_df_combined$P_B_Ave <- mlb_df_combined$cum_Hits/mlb_df_combined$cum_AB
+  mlb_df_combined$P_B_DB_Ave <- mlb_df_combined$cum_DB/mlb_df_combined$cum_AB
+  mlb_df_combined$P_B_TR_Ave <- mlb_df_combined$cum_TR/mlb_df_combined$cum_AB
+  mlb_df_combined$P_B_HR_Ave <- mlb_df_combined$cum_HR/mlb_df_combined$cum_AB
+  mlb_df_combined$P_B_BB_Ave <- mlb_df_combined$cum_BB/mlb_df_combined$cum_AB
+  mlb_df_combined$P_B_SO_Ave <- mlb_df_combined$cum_SO/mlb_df_combined$cum_AB
+  
+  mlb_df_combined$P_D_Ave <- mlb_df_combined$P_A_Ave - mlb_df_combined$P_B_Ave
+  mlb_df_combined$P_D_DB_Ave <- mlb_df_combined$P_A_DB_Ave - mlb_df_combined$P_B_DB_Ave
+  mlb_df_combined$P_D_TR_Ave <- mlb_df_combined$P_A_TR_Ave - mlb_df_combined$P_B_TR_Ave
+  mlb_df_combined$P_D_HR_Ave <- mlb_df_combined$P_A_HR_Ave - mlb_df_combined$P_B_HR_Ave
+  mlb_df_combined$P_D_BB_Ave <- mlb_df_combined$P_A_BB_Ave - mlb_df_combined$P_B_BB_Ave
+  mlb_df_combined$P_D_SO_Ave <- mlb_df_combined$P_A_SO_Ave - mlb_df_combined$P_B_SO_Ave
+  
+  mlb_df_combined$D_Ave <- mlb_df_combined$A_Ave - mlb_df_combined$B_Ave
+  mlb_df_combined$D_DB_Ave <- mlb_df_combined$A_DB_Ave - mlb_df_combined$B_DB_Ave
+  mlb_df_combined$D_TR_Ave <- mlb_df_combined$A_TR_Ave - mlb_df_combined$B_TR_Ave
+  mlb_df_combined$D_HR_Ave <- mlb_df_combined$A_HR_Ave - mlb_df_combined$B_HR_Ave
+  mlb_df_combined$D_BB_Ave <- mlb_df_combined$A_BB_Ave - mlb_df_combined$B_BB_Ave
+  mlb_df_combined$D_SO_Ave <- mlb_df_combined$A_SO_Ave - mlb_df_combined$B_SO_Ave
+  
+  columns <- c(1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 45, 80:91)
+  
+  
+  mlb_df_reg <- mlb_df_combined[,columns]
+  mlb_df_reg$Home[mlb_df_reg$VH.x == 'H'] <- 1
+  mlb_df_reg$Home[mlb_df_reg$VH.x == 'V'] <- 0
+  
+  size_this_year <- data.frame(Year = year, Size = nrow(mlb_df_reg))
+  size_df <- rbind(size_df, size_this_year)
+  
+  write.csv(mlb_df_reg, file = paste("mlb_data_combined_20", year, ".csv", sep = ""), row.names = FALSE)
+  
+}
+
+```
+
+We also ran the above slightly modified to produce offensive averages for the throwing hand of the pitcher a team is facing.
+
+Once these csvs were created we built our regression. The below code was ran with 2015, 2016 and 2017 as the training data and 2016, 2017 and 2018 as the test data. Only one is shown for the sake of space.
+
+```{r}
+mlb_train <- read.csv('mlb_data_combined_wPH_2015.csv')
+mlb_test <- read.csv('mlb_data_combined_wPH_2016.csv')
+
+mlb_train <- mlb_train[complete.cases(mlb_train), ]
+mlb_test <- mlb_test[complete.cases(mlb_test), ]
+#mlb_2017_train$Loss[mlb_2017_train$Win == 0] <-1
+#mlb_2017_train$Loss[mlb_2017_train$Win == 1] <-0
+
+fit <- glm(Win ~ Home + D_Ave + D_DB_Ave + D_TR_Ave + D_HR_Ave + D_BB_Ave + D_SO_Ave + P_D_Ave + P_D_DB_Ave + P_D_TR_Ave + P_D_HR_Ave + P_D_BB_Ave + P_D_SO_Ave , data = mlb_train)
+summary(fit)
+step(fit)
+
+# Gives Win ~ Home + D_DB_Ave + D_TR_Ave + D_BB_Ave + P_D_BB_Ave + P_D_SO_Ave for 2017
+
+# Gives Win ~ Home + D_DB_Ave + D_TR_Ave + D_BB_Ave + D_SO_Ave + P_D_Ave + P_D_DB_Ave 
+# + P_D_HR_Ave + P_D_BB_Ave for 2016
+
+# Gives Win ~ Home + D_DB_Ave + D_BB_Ave + P_D_TR_Ave + P_D_BB_Ave for 2015
+
+fit2 <- glm(formula = Win ~ Home + D_DB_Ave + D_TR_Ave + D_BB_Ave + P_D_TR_Ave + 
+              P_D_SO_Ave, data = mlb_train)
+summary(fit2)
+mlb_test$reg_predict <- predict(fit2, mlb_test, type = "response")
+mlb_test$reg_Bet <- ((mlb_test$reg_predict*(mlb_test$PriceClose-1)-(1-mlb_test$reg_predict))/(mlb_test$PriceClose-1))*1000
+mlb_test$reg_Bet[mlb_test$CloseOdds>mlb_test$reg_predict] <- 0
+mlb_test$reg_Winnings <- (mlb_test$Win*mlb_test$PriceClose - 1)*mlb_test$reg_Bet
+
+
+sum(mlb_test$reg_Winnings)
+
+# mlb_test$WinningsEven[mlb_test$CloseOdds<mlb_test$predict] <- 100*mlb_test $Win[mlb_test$CloseOdds<mlb_test$predict]*mlb_test$PriceClose[mlb_test$CloseOdds<mlb_test$predict]-100
+# mlb_test$WinningsEven[mlb_test$CloseOdds>mlb_test$predict] <- 0
+# 
+# sum(mlb_test$WinningsEven)
+mlb_reg_summary <- mlb_test[, c(1:3, 7:10, 12, 29:31)]
+
+write.csv(mlb_reg_summary, file = 'regression_betting_performance_2016.csv', row.names = FALSE)
+
+```
+
+
